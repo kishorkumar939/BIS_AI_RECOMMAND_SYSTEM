@@ -254,3 +254,12 @@ async def audit_pdf(
         missing_qco=missing_qco,
         summary=summary,
     )
+  app = FastAPI()
+
+
+@app.get("/api/health")
+def health():
+    return {
+        "status": "ok",
+        "message": "BIS AI Recommendation API is running"
+    }
