@@ -56,10 +56,11 @@ class RAGEngine:
         return HuggingFaceEmbeddings(model_name=EMBEDDING_MODEL)
 
     def _init_qdrant(self) -> QdrantClient:
-        """Connect to Docker Qdrant or fallback to local disk storage."""
+        """Connect to Docker/Cloud Qdrant or fallback to local disk storage."""
         qdrant_url = os.getenv("QDRANT_URL", "http://localhost:6333")
+        qdrant_api_key = os.getenv("QDRANT_API_KEY", None)
         try:
-            client = QdrantClient(url=qdrant_url, timeout=3.0)
+            client = QdrantClient(url=qdrant_url, api_key=qdrant_api_key, timeout=3.0)
             client.get_collections()
             return client
         except Exception:
