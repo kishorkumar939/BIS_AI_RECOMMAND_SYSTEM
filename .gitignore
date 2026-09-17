@@ -22,3 +22,7 @@ dist-ssr
 *.sw?
 .env
 backend/venv/
+backend/venv2/
+.vercel
+__pycache__/
+*.pyc

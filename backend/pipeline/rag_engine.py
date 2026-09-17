@@ -5,7 +5,9 @@ and the prompt template for drafting legal tender compliance clauses.
 
 import os
 import re
-from typing import List, Dict, Any
+import json
+from pathlib import Path
+from typing import List, Dict, Any, Tuple
 from dataclasses import dataclass
 
 from langchain_huggingface import HuggingFaceEmbeddings
@@ -24,6 +26,111 @@ QDRANT_URL = os.getenv("QDRANT_URL", "http://localhost:6333")
 QDRANT_COLLECTION = os.getenv("QDRANT_COLLECTION", "bis_standards")
 EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "sentence-transformers/all-MiniLM-L6-v2")
 LLM_MODEL_PATH = os.getenv("LLM_MODEL_PATH", "models/mistral-7b-instruct.Q4_K_M.gguf")
+RULES_FILE = Path(__file__).resolve().parent.parent / "data" / "bis_rules.json"
+
+CATEGORY_MAP = {
+    "Packaged Drinking Water": "Food & Agriculture",
+    "Packaged Natural Mineral Water": "Food & Agriculture",
+    "Ordinary Portland Cement (OPC)": "Civil & Construction Materials",
+    "Portland Pozzolana Cement (PPC)": "Civil & Construction Materials",
+    "Portland Slag Cement (PSC)": "Civil & Construction Materials",
+    "Plain and Reinforced Concrete": "Civil & Construction Materials",
+    "Ready-Mixed Concrete (RMC)": "Civil & Construction Materials",
+    "Concrete Admixtures": "Civil & Construction Materials",
+    "Autoclaved Aerated Concrete (AAC) Blocks": "Civil & Construction Materials",
+    "Precast Concrete Blocks": "Civil & Construction Materials",
+    "Ceramic and Vitrified Tiles": "Civil & Construction Materials",
+    "TMT Steel Bars": "Steel & Metallurgy",
+    "Structural Steel": "Steel & Metallurgy",
+    "Galvanized Steel Tubes and Pipes": "Steel & Metallurgy",
+    "Seamless Steel Gas Cylinders": "Steel & Metallurgy",
+    "UPVC Pipes for Potable Water Supplies": "Plastics, Chemicals & Rubber",
+    "HDPE Pipes for Water Supply": "Plastics, Chemicals & Rubber",
+    "PVC Pipes for Agricultural Use": "Plastics, Chemicals & Rubber",
+    "Plywood for General Purposes": "Civil & Construction Materials",
+    "Marine Plywood": "Civil & Construction Materials",
+    "Fire Retardant Plywood": "Civil & Construction Materials",
+    "Wooden Flush Door Shutters": "Civil & Construction Materials",
+    "Helmets for Two-Wheeler Riders": "Automotive & Transport",
+    "Safety Glass for Road Transport": "Automotive & Transport",
+    "Automotive Tyres - Passenger Car": "Automotive & Transport",
+    "Automotive Tyres - Commercial Vehicles": "Automotive & Transport",
+    "Two and Three Wheeler Tyres": "Automotive & Transport",
+    "Automotive Tyre Tubes": "Automotive & Transport",
+    "Domestic Pressure Cookers": "Domestic & Consumer Appliances",
+    "Domestic Gas Stoves (LPG)": "Domestic & Consumer Appliances",
+    "LPG Cylinders for Domestic Use": "Domestic & Consumer Appliances",
+    "Valves for LPG Cylinders": "Domestic & Consumer Appliances",
+    "Electric Iron": "Domestic & Consumer Appliances",
+    "Electric Immersion Water Heaters": "Domestic & Consumer Appliances",
+    "Stationary Storage Electric Water Heaters (Geysers)": "Domestic & Consumer Appliances",
+    "Electric Food Mixers, Grinders, and Blenders": "Domestic & Consumer Appliances",
+    "Electric Room Heaters": "Domestic & Consumer Appliances",
+    "Electric Toasters": "Domestic & Consumer Appliances",
+    "Microwave Ovens": "Domestic & Consumer Appliances",
+    "Ceiling Fans and Regulators": "Domestic & Consumer Appliances",
+    "Electric Air Coolers": "Domestic & Consumer Appliances",
+    "Domestic Refrigerators": "Domestic & Consumer Appliances",
+    "Room Air Conditioners": "Domestic & Consumer Appliances",
+    "PVC Insulated Cables (up to 1100V)": "Electrical & Electronics",
+    "XLPE Insulated Power Cables": "Electrical & Electronics",
+    "Self-Ballasted LED Lamps": "Electrical & Electronics",
+    "Fixed General Purpose LED Luminaires": "Electrical & Electronics",
+    "Smart Electricity Meters": "Electrical & Electronics",
+    "AC Static Watt-hour Meters": "Electrical & Electronics",
+    "Miniature Circuit Breakers (MCBs)": "Electrical & Electronics",
+    "Residual Current Circuit Breakers (RCCBs)": "Electrical & Electronics",
+    "Moulded Case Circuit Breakers (MCCBs)": "Electrical & Electronics",
+    "Distribution Transformers": "Electrical & Electronics",
+    "Three-Phase Induction Motors": "Electrical & Electronics",
+    "Single-Phase AC Motors": "Electrical & Electronics",
+    "Solar Photovoltaic (PV) Modules": "Solar & Renewable Energy",
+    "Solar Inverters": "Solar & Renewable Energy",
+    "Solar Flat Plate Collectors": "Solar & Renewable Energy",
+    "Mobile Phones": "Electronics & IT Equipment",
+    "Laptops and Notebooks": "Electronics & IT Equipment",
+    "Tablet Computers": "Electronics & IT Equipment",
+    "Power Banks": "Electronics & IT Equipment",
+    "Smart Watches": "Electronics & IT Equipment",
+    "Secondary Lithium-ion Cells and Batteries": "Electronics & IT Equipment",
+    "Secondary Nickel Cells and Batteries": "Electronics & IT Equipment",
+    "Lead-Acid Storage Batteries": "Electrical & Electronics",
+    "Television Sets": "Electronics & IT Equipment",
+    "Wireless Keyboards and Mice": "Electronics & IT Equipment",
+    "Audio Amplifiers and Wireless Speakers": "Electronics & IT Equipment",
+    "Toys - Mechanical and Physical Properties": "Toys & Children Products",
+    "Toys - Flammability": "Toys & Children Products",
+    "Toys - Migration of Certain Elements": "Toys & Children Products",
+    "Electric Toys": "Toys & Children Products",
+    "Gold Hallmarking": "Precious Metals & Hallmarking",
+    "Silver Hallmarking": "Precious Metals & Hallmarking",
+    "Infant Milk Food": "Food & Agriculture",
+    "Milk Powder": "Food & Agriculture",
+    "Condensed Milk": "Food & Agriculture",
+    "Safety Footwear": "Leather, Footwear & PPE",
+    "Protective Footwear": "Leather, Footwear & PPE",
+    "Rubber Hawai Chappal": "Leather, Footwear & PPE",
+    "Canvas Footwear": "Leather, Footwear & PPE",
+    "Portable Fire Extinguishers": "Fire Safety & Protection",
+    "Fire Hose Delivery Couplings": "Fire Safety & Protection",
+    "Disposable Hypodermic Syringes": "Medical & Healthcare",
+    "Surgical Rubber Gloves": "Medical & Healthcare",
+    "Clinical Electronic Thermometers": "Medical & Healthcare",
+    "Medical Electrical Equipment": "Medical & Healthcare",
+    "Surgical Face Masks": "Medical & Healthcare",
+    "Protective Rubber Gloves for Electrical Purposes": "Electrical & Electronics",
+    "Sanitary Napkins": "Medical & Healthcare",
+    "Aluminium Foil for Food Packaging": "Packaging & Containers",
+    "Tinplate for Food Packaging": "Packaging & Containers",
+    "Corrugated Fibreboard Boxes": "Packaging & Containers",
+    "HDPE and PP Woven Sacks": "Packaging & Containers",
+    "Jute Bags for Packing Foodgrains": "Packaging & Containers",
+    "Seamless Steel Gas Cylinders": "Steel & Metallurgy",
+    "Earthquake Resistant Design": "Structural Engineering & Codes",
+    "Ductile Detailing of RC Structures": "Structural Engineering & Codes",
+    "Structural Design Dead and Imposed Loads": "Structural Engineering & Codes",
+    "Safety Matches": "Chemicals & Consumer Safety",
+}
 
 
 @dataclass
@@ -40,7 +147,7 @@ class Recommendation:
 
 
 class RAGEngine:
-    """Orchestrates embeddings, vector retrieval, and LLM synthesis."""
+    """Orchestrates embeddings, vector retrieval, curated rules matching, and LLM synthesis."""
 
     def __init__(self):
         self.embeddings = self._init_embeddings()
@@ -49,11 +156,141 @@ class RAGEngine:
         self.llm = self._init_llm()
         self.prompt = self._build_prompt()
         self.legal_prompt = self._build_legal_prompt()
+        self.curated_rules = self._load_curated_rules()
+
+    def _load_curated_rules(self) -> List[Dict[str, Any]]:
+        """Load curated certification rules and standards dataset from bis_rules.json."""
+        rules = []
+        if not RULES_FILE.exists():
+            return rules
+
+        try:
+            with open(RULES_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+
+            for product_name, entries in data.items():
+                cat = CATEGORY_MAP.get(product_name, "General Engineering & Consumer Goods")
+                for entry in entries:
+                    rule_val = entry.get("Rule_value", "")
+                    state_name = entry.get("state_name", "Product Standard")
+                    context = entry.get("Context", "")
+
+                    # Extract base IS code e.g. "IS 14543:2016" -> "IS 14543"
+                    m = re.match(r"^(.*?)(?::(\d{4}))?$", rule_val.strip())
+                    base_code = m.group(1).strip() if m else rule_val.strip()
+                    year = int(m.group(2)) if m and m.group(2) else None
+
+                    is_qco = state_name in [
+                        "Mandatory Certification",
+                        "Compulsory Registration Scheme",
+                        "Mandatory Hallmarking"
+                    ]
+                    is_crs = state_name == "Compulsory Registration Scheme"
+
+                    code_digits = re.findall(r"\d+", base_code)
+
+                    rules.append({
+                        "product_name": product_name,
+                        "product_name_lower": product_name.lower(),
+                        "rule_value": rule_val,
+                        "base_code": base_code,
+                        "base_code_lower": base_code.lower(),
+                        "code_digits": code_digits,
+                        "state_name": state_name,
+                        "context": context,
+                        "year": year,
+                        "category": cat,
+                        "is_qco": is_qco,
+                        "is_crs": is_crs,
+                        "simplified_procedure": True,
+                    })
+        except Exception as e:
+            print(f"[-] Warning loading curated rules: {e}")
+
+        return rules
+
+    def _match_curated_rules(self, query: str) -> List[Recommendation]:
+        """Direct, high-precision matcher for user-provided certified standards and rules."""
+        if not self.curated_rules:
+            return []
+
+        q_lower = query.lower().strip()
+        q_clean = re.sub(r"[^\w\s]", " ", q_lower)
+        q_tokens = set(q_clean.split())
+        q_digits = set(re.findall(r"\d+", q_lower))
+
+        matches = []
+        seen = set()
+
+        for r in self.curated_rules:
+            score = 0.0
+            prod_lower = r["product_name_lower"]
+            base_lower = r["base_code_lower"]
+
+            # 1. Exact IS code or rule value match
+            if base_lower in q_lower or r["rule_value"].lower() in q_lower:
+                score = 0.99
+            elif any(d in q_digits and len(d) >= 3 for d in r["code_digits"]) and any(k in q_tokens for k in ["is", "standard", "code", "part", "iec"]):
+                score = 0.97
+            # 2. Product name full match
+            elif prod_lower in q_lower or (len(q_lower) >= 5 and q_lower in prod_lower):
+                score = 0.98
+            else:
+                # Token overlap with product name
+                prod_tokens = set(re.sub(r"[^\w\s]", " ", prod_lower).split()) - {
+                    "and", "for", "in", "of", "the", "to", "or", "part", "sec", "use", "purposes"
+                }
+                overlap = prod_tokens.intersection(q_tokens)
+                if len(prod_tokens) > 0 and len(overlap) == len(prod_tokens):
+                    score = 0.96
+                elif len(overlap) >= 2:
+                    score = 0.92 + (0.02 * len(overlap))
+                elif len(overlap) == 1:
+                    single_word = list(overlap)[0]
+                    high_intent_terms = {
+                        "helmets", "helmet", "geysers", "geyser", "tinplate", "hallmarking",
+                        "admixtures", "syringes", "napkins", "cookers", "toasters", "microwaves",
+                        "refrigerators", "inverters", "chappal", "plywood", "cement", "tiles",
+                        "tyres", "transformers", "mcb", "mccb", "rccb", "fans", "motors"
+                    }
+                    if single_word in high_intent_terms:
+                        score = 0.93
+
+            if score >= 0.90:
+                key = (r["base_code"], r["product_name"])
+                if key not in seen:
+                    seen.add(key)
+                    matches.append(
+                        Recommendation(
+                            is_code=r["base_code"],
+                            title=f"{r['product_name']} ({r['rule_value']})",
+                            score=round(score, 4),
+                            scope=r["context"],
+                            category=r["category"],
+                            qco_mandatory=r["is_qco"],
+                            crs_applicable=r["is_crs"],
+                            simplified_procedure=r["simplified_procedure"],
+                            normative_refs=[],
+                        )
+                    )
+
+        matches.sort(key=lambda x: x.score, reverse=True)
+        return matches
 
     # --- Initialization helpers ---
 
     def _init_embeddings(self) -> HuggingFaceEmbeddings:
-        return HuggingFaceEmbeddings(model_name=EMBEDDING_MODEL)
+        try:
+            return HuggingFaceEmbeddings(
+                model_name=EMBEDDING_MODEL,
+                model_kwargs={"local_files_only": True},
+                encode_kwargs={"normalize_embeddings": True},
+            )
+        except Exception:
+            return HuggingFaceEmbeddings(
+                model_name=EMBEDDING_MODEL,
+                encode_kwargs={"normalize_embeddings": True},
+            )
 
     def _init_qdrant(self) -> QdrantClient:
         """Connect to Docker/Cloud Qdrant or fallback to local disk storage."""
@@ -136,26 +373,140 @@ class RAGEngine:
         expansions = []
 
         synonyms = [
+            # Safety headgear & personal protection
             (r'\b(hard\s*hats?)\b', "industrial safety helmets IS 2925 construction workers"),
-            (r'\b(crash\s*helmets?)\b', "protective helmet two wheeler riders motorcycle IS 4151"),
-            (r'\b(geysers?|water\s*geysers?)\b', "stationary storage electric water heaters IS 2082"),
-            (r'\b(food\s*powder\s*for\s*babies|baby\s*food|for\s*babies)\b', "infant milk substitutes baby infant formula IS 14433"),
-            (r'\b(window\s*ac|ac\s*units?)\b', "room air conditioners unitary window AC IS 1391"),
-            (r'\b(gunny\s*bags?|plastic\s*gunny)\b', "hdpe pp woven sacks packing foodgrains IS 14887"),
-            (r'\b(carried\s*on\s*the\s*back|on\s*the\s*back)\b', "knapsack sprayer compression sprayer IS 1970"),
+            (r'\b(crash\s*helmets?|two\s*wheeler\s*helmets?|motorcycle\s*helmets?)\b', "protective helmet two wheeler riders motorcycle IS 4151"),
+            (r'\b(safety\s*shoes?|safety\s*boots?|safety\s*footwear)\b', "personal protective equipment safety footwear 200J toe protection IS 15298 Part 2"),
+            (r'\b(protective\s*footwear|protective\s*shoes?)\b', "protective footwear 100J impact toe cap IS 15298 Part 3"),
+            (r'\b(hawai\s*chappals?|rubber\s*slippers?|flip\s*flops?)\b', "rubber hawai chappal slippers strap abrasion IS 10702"),
+            (r'\b(canvas\s*shoes?|canvas\s*footwear)\b', "canvas footwear rubber sole IS 3735"),
+
+            # Water & Beverages
+            (r'\b(packaged\s*drinking\s*water|bottled\s*water|mineral\s*water\s*bottle)\b', "packaged drinking water microbiological safety IS 14543"),
+            (r'\b(natural\s*mineral\s*water|spring\s*water)\b', "packaged natural mineral water naturally sourced IS 13428"),
+
+            # Cement & Concrete
+            (r'\b(opc\s*cement|ordinary\s*portland\s*cement|53\s*grade|43\s*grade|33\s*grade)\b', "ordinary portland cement composition compressive strength IS 269"),
+            (r'\b(ppc\s*cement|portland\s*pozzolana\s*cement|fly\s*ash\s*cement)\b', "portland pozzolana cement fly ash calcined clay IS 1489 Part 1 Part 2"),
+            (r'\b(psc\s*cement|portland\s*slag\s*cement|slag\s*cement)\b', "portland slag cement granulated blast furnace slag IS 455"),
+            (r'\b(rcc\s*design|plain\s*concrete|reinforced\s*concrete|concrete\s*code)\b', "plain and reinforced concrete code of practice IS 456"),
+            (r'\b(ready\s*mix\s*concrete|rmc|batching\s*plant)\b', "ready-mixed concrete production testing batching delivery IS 4926"),
+            (r'\b(concrete\s*admixtures?|superplasticizers?|retarders?|accelerators?)\b', "chemical admixtures used in concrete plasticizers IS 9103"),
+            (r'\b(aac\s*blocks?|autoclaved\s*aerated\s*concrete|cellular\s*concrete)\b', "autoclaved cellular aerated concrete precast masonry units AAC IS 2185 Part 3"),
+            (r'\b(precast\s*concrete\s*blocks?|hollow\s*blocks?|solid\s*blocks?)\b', "hollow solid precast concrete masonry blocks IS 2185 Part 1"),
+            (r'\b(vitrified\s*tiles?|ceramic\s*tiles?|glazed\s*tiles?|floor\s*tiles?)\b', "pressed ceramic glazed vitrified tiles water absorption scratch IS 15622"),
+
+            # Steel & Metallurgy
+            (r'\b(tmt\s*rebars?|tmt\s*steel|fe\s*500|fe\s*550|deformed\s*steel\s*bars?)\b', "high strength deformed steel bars wires concrete reinforcement IS 1786"),
+            (r'\b(structural\s*steel|steel\s*sections?|hot\s*rolled\s*steel)\b', "hot rolled medium high tensile structural steel IS 2062"),
+            (r'\b(gi\s*pipes?|galvanized\s*pipes?|mild\s*steel\s*tubes?)\b', "mild steel tubulars and pipes galvanized screwing welding IS 1239 Part 1"),
+            (r'\b(cgi\s*sheets?)\b', "galvanized steel sheets corrugated IS 277"),
+            (r'\b(gas\s*cylinders?|seamless\s*steel\s*cylinders?)\b', "refillable seamless steel gas cylinders industrial medical IS 7285 Part 2"),
+
+            # Pipes & Plumbing
+            (r'\b(upvc\s*pipes?|potable\s*water\s*pipes?)\b', "unplasticized polyvinyl chloride UPVC pipes potable water IS 4985"),
+            (r'\b(hdpe\s*pipes?|polyethylene\s*pipes?)\b', "high-density polyethylene HDPE pipes underground water mains IS 4984"),
+            (r'\b(agri\s*pipes?|agricultural\s*pipes?|irrigation\s*pipes?)\b', "unplasticized PVC pipes agricultural irrigation drainage IS 4985"),
+
+            # Plywood & Timber
+            (r'\b(plywood\s*for\s*general|mr\s*grade|bwr\s*grade)\b', "plywood general purposes moisture resistant boiling water resistant IS 303"),
+            (r'\b(marine\s*plywood|bwp\s*plywood)\b', "marine plywood fungal water resistant prolonged exposure IS 710"),
+            (r'\b(fire\s*retardant\s*plywood|flame\s*retardant\s*plywood)\b', "flame spread resistant treated fire retardant plywood IS 5509"),
+            (r'\b(flush\s*doors?|wooden\s*flush\s*door|door\s*shutters?)\b', "solid core wooden flush door shutters face panels IS 2202 Part 1"),
+            (r'\b(shuttering\s*boards?|shuttering\s*plywood)\b', "plywood for concrete shuttering work IS 4990"),
+
+            # Automotive & Transport
+            (r'\b(safety\s*glass|car\s*windscreen|toughened\s*glass\s*transport)\b', "laminated toughened safety glass road transport windscreens IS 2553 Part 2"),
+            (r'\b(car\s*tyres?|passenger\s*tyres?)\b', "pneumatic tyres passenger cars load speed IS 15633"),
+            (r'\b(commercial\s*tyres?|truck\s*tyres?|bus\s*tyres?)\b', "pneumatic tyres commercial vehicles trucks buses IS 15636"),
+            (r'\b(two\s*wheeler\s*tyres?|scooter\s*tyres?|motorcycle\s*tyres?)\b', "pneumatic tyres scooters motorcycles autorickshaws IS 15627"),
+            (r'\b(tyre\s*tubes?|inner\s*tubes?)\b', "rubber inner tubes automotive pneumatic tyres IS 13098"),
+
+            # Domestic Appliances & LPG
+            (r'\b(pressure\s*cookers?)\b', "domestic pressure cookers aluminium stainless steel safety IS 2347"),
+            (r'\b(gas\s*stoves?|lpg\s*stoves?)\b', "gas stoves burner assemblies liquefied petroleum gas LPG IS 4246"),
+            (r'\b(lpg\s*cylinders?|domestic\s*gas\s*cylinders?)\b', "welded low carbon steel cylinders domestic LPG IS 3196 Part 1"),
+            (r'\b(lpg\s*valves?|cylinder\s*valves?)\b', "valve fittings domestic commercial LPG cylinders IS 8737"),
+            (r'\b(electric\s*iron|steam\s*iron|dry\s*iron)\b', "dry steam electric household iron safety IS 366"),
+            (r'\b(immersion\s*heaters?|immersion\s*rod)\b', "electric immersion water heaters portable domestic IS 368"),
+            (r'\b(geysers?|water\s*geysers?|storage\s*water\s*heaters?)\b', "stationary storage electric water heaters geysers IS 2082"),
+            (r'\b(mixer\s*grinders?|blenders?|food\s*mixers?)\b', "domestic electric food preparation machines mixer grinders IS 4250"),
+            (r'\b(room\s*heaters?|radiant\s*heaters?|convector\s*heaters?)\b', "domestic electric room heaters convectors radiant IS 302 Part 2 Sec 30"),
+            (r'\b(toasters?|electric\s*toasters?|grills?)\b', "electric toasters grills roasters household cooking IS 302 Part 2 Sec 9"),
+            (r'\b(microwave\s*ovens?|microwaves?)\b', "microwave ovens radiation leak prevention safety IS 302 Part 2 Sec 25"),
+            (r'\b(ceiling\s*fans?|fan\s*regulators?)\b', "electric ceiling fans regulators air delivery IS 374"),
+            (r'\b(air\s*coolers?|desert\s*coolers?)\b', "evaporative air coolers desert coolers electrical airflow IS 3315"),
+            (r'\b(refrigerators?|fridges?)\b', "household refrigerating appliances domestic refrigerators IS 17550 Part 1"),
+            (r'\b(window\s*ac|ac\s*units?|split\s*ac|room\s*air\s*conditioners?)\b', "room air conditioners unitary window split IS 1391 Part 1 Part 2"),
+
+            # Cables & Electrical Equipment
+            (r'\b(flexible\s*copper\s*wiring|lighting\s*circuits|flexible\s*conductor|pvc\s*cables?)\b', "pvc insulated cables cords 1100V working voltage IS 694"),
+            (r'\b(xlpe\s*cables?|power\s*cables?|ht\s*cables?)\b', "cross-linked polyethylene XLPE insulated PVC sheathed cables IS 7098 Part 1 Part 2"),
+            (r'\b(led\s*lamps?|led\s*bulbs?|self-ballasted)\b', "self-ballasted LED lamps general lighting safety performance IS 16102 Part 1 Part 2"),
+            (r'\b(led\s*luminaires?|led\s*street\s*lights?|flood\s*lights?)\b', "fixed general purpose LED luminaires indoor outdoor IS 10322 Part 5 Sec 1"),
+            (r'\b(smart\s*meters?|smart\s*electricity\s*meters?)\b', "AC static direct connected smart electricity meters active energy IS 16444 Part 1"),
+            (r'\b(static\s*energy\s*meters?|watt-hour\s*meters?)\b', "AC static watt-hour meters Class 1 Class 2 consumer IS 13779"),
+            (r'\b(mcbs?|miniature\s*circuit\s*breakers?)\b', "miniature circuit breakers overcurrent protection IS/IEC 60898-1"),
+            (r'\b(rccbs?|residual\s*current\s*breakers?|elcb)\b', "residual current operated circuit breakers RCCBs IS 12640 Part 1"),
+            (r'\b(mccbs?|moulded\s*case\s*circuit\s*breakers?)\b', "moulded case circuit breakers MCCBs industrial switchgear IS/IEC 60947-2"),
+            (r'\b(distribution\s*transformers?|oil-cooled\s*transformers?)\b', "oil immersed distribution transformers 1180 mineral oil up to 2500 kVA"),
+            (r'\b(induction\s*motors?|3-phase\s*motors?|three\s*phase\s*motors?)\b', "line operated three-phase cage induction motors energy efficiency IE2 IE3 IE4 IS 12615"),
+            (r'\b(single\s*phase\s*motors?|small\s*ac\s*motors?)\b', "single-phase small AC electric motors domestic pump sets IS 996"),
             (r'\b(wall-mounted\s*switches|office\s*lighting\s*switches|switches\s*for)\b', "switches for domestic and similar purposes IS 3854"),
-            (r'\b(flexible\s*copper\s*wiring|lighting\s*circuits|flexible\s*conductor)\b', "flexible conductor pvc insulated cables cords 1100V IS 694"),
-            (r'\b(distribution\s*transformers?|oil-cooled)\b', "oil immersed distribution transformers 1180 mineral oil"),
-            (r'\b(single-use\s*sterile\s*latex\s*gloves|disposable\s*gloves)\b', "disposable surgical rubber gloves IS 13422"),
-            (r'\b(door\s*frames\s*and\s*window\s*ventilators|window\s*ventilators)\b', "steel doors windows and ventilators IS 1038"),
+
+            # Solar & Renewable
+            (r'\b(solar\s*pv|photovoltaic\s*modules?|solar\s*panels?)\b', "crystalline silicon terrestrial solar photovoltaic PV modules IS 14286 IEC 61730 Part 1"),
+            (r'\b(solar\s*inverters?|pv\s*inverters?)\b', "safety of power converters photovoltaic power systems solar inverters IS 16221 Part 2"),
+            (r'\b(solar\s*flat\s*plate|solar\s*water\s*heaters?)\b', "solar flat plate collectors liquid heating systems IS 12933 Part 1"),
+
+            # Electronics & IT (CRS)
+            (r'\b(mobile\s*phones?|smartphones?|cell\s*phones?)\b', "information technology mobile phones handheld safety IS 13252 Part 1"),
+            (r'\b(laptops?|notebooks?|portable\s*computers?)\b', "laptops notebooks portable computers safety heating fire IS 13252 Part 1"),
+            (r'\b(tablets?|tablet\s*computers?|ipads?)\b', "tablet computers information technology portable devices IS 13252 Part 1"),
+            (r'\b(power\s*banks?|portable\s*chargers?)\b', "portable external battery backup packs power banks IS 13252 Part 1"),
+            (r'\b(smart\s*watches?|wearables?)\b', "wearable electronic devices smart watches IS 13252 Part 1"),
+            (r'\b(lithium\s*batteries?|li-ion\s*cells?|lithium-ion)\b', "portable sealed secondary lithium cells batteries IS 16046 Part 2"),
+            (r'\b(nickel\s*batteries?|ni-mh\s*cells?)\b', "portable sealed secondary nickel battery chemistries IS 16046 Part 1"),
+            (r'\b(lead\s*acid\s*batteries?|car\s*batteries?)\b', "lead-acid storage batteries motor vehicles low maintenance IS 14257"),
+            (r'\b(televisions?|tv\s*sets?|smart\s*tvs?)\b', "audio video apparatus television sets CRT LCD LED IS 616"),
+            (r'\b(wireless\s*keyboards?|wireless\s*mice|keyboards\s*and\s*mice)\b', "electronic input peripherals wireless keyboards mice IS 13252 Part 1"),
+            (r'\b(speakers?|bluetooth\s*speakers?|amplifiers?)\b', "electronic sound amplifiers wireless bluetooth speakers IS 616"),
+
+            # Hallmarking
+            (r'\b(gold\s*hallmarking|gold\s*jewellery|gold\s*purity)\b', "gold gold alloys jewellery artefacts fineness hallmarking IS 1417"),
+            (r'\b(silver\s*hallmarking|silver\s*jewellery)\b', "silver silver alloy jewellery artefacts assaying hallmarking IS 2112"),
+
+            # Food & Baby Food
+            (r'\b(food\s*powder\s*for\s*babies|baby\s*food|infant\s*formula|infant\s*milk)\b', "infant formula milk substitutes nutritional hygiene IS 14433"),
+            (r'\b(milk\s*powder|skimmed\s*milk\s*powder)\b', "whole milk powder partly skimmed milk powder IS 1165"),
+            (r'\b(condensed\s*milk)\b', "sweetened condensed milk condensed skimmed milk IS 1166"),
+
+            # Medical & Healthcare
+            (r'\b(hospital\s*beds?|fowler\s*beds?)\b', "hospital bed fowler beds adjustable IS 4037"),
+            (r'\b(syringes?|hypodermic\s*syringes?)\b', "sterile hypodermic syringes single use plastic IS 10245"),
+            (r'\b(single-use\s*sterile\s*latex\s*gloves|disposable\s*gloves|surgical\s*rubber\s*gloves?)\b', "sterile rubber surgical gloves tensile elongation IS 13422"),
+            (r'\b(thermometers?|clinical\s*thermometers?|digital\s*thermometers?)\b', "clinical electronic thermometers medical temperature IS 16180"),
+            (r'\b(medical\s*electrical|medical\s*devices?)\b', "medical electrical equipment basic safety essential performance IS 13450 Part 1"),
+            (r'\b(surgical\s*face\s*masks?|face\s*masks?|medical\s*masks?)\b', "medical surgical face masks bacterial filtration efficiency IS 16289"),
+            (r'\b(electrical\s*gloves?|lineman\s*gloves?|insulating\s*gloves?)\b', "insulating rubber gloves electrical shock hazards IS 4770"),
+            (r'\b(sanitary\s*napkins?|sanitary\s*pads?)\b', "sanitary napkins absorbency pH hygiene biodegradability IS 5405"),
+
+            # Packaging & Storage
+            (r'\b(aluminium\s*foil|aluminum\s*foil|foil\s*packaging)\b', "bare aluminium alloy foil food contact packaging purity IS 15392"),
+            (r'\b(tinplate|tin\s*cans?|food\s*cans?)\b', "electrolytic tinplate food beverage cans packaging IS 1997"),
+            (r'\b(corrugated\s*boxes?|cardboard\s*boxes?|cartons?)\b', "corrugated fibreboard boxes transit storage packaging IS 2771 Part 1"),
+            (r'\b(gunny\s*bags?|plastic\s*gunny|woven\s*sacks?)\b', "hdpe pp woven sacks packing foodgrains commodities IS 11652 IS 14887"),
+            (r'\b(jute\s*bags?|burlap\s*bags?|jute\s*sacks?)\b', "jute bags packing 50 kg foodgrains breaking strength IS 12650"),
+
+            # Structural & Seismic Codes
+            (r'\b(earthquake\s*resistant|seismic\s*design|seismic\s*zones?)\b', "earthquake resistant design structures seismic zones IS 1893 Part 1"),
+            (r'\b(ductile\s*detailing|seismic\s*detailing)\b', "ductile design detailing reinforced concrete structures seismic IS 13920"),
+            (r'\b(dead\s*loads?|imposed\s*loads?|wind\s*loads?|building\s*loads?)\b', "structural design dead loads IS 875 Part 1 imposed loads Part 2 wind loads Part 3"),
+            (r'\b(safety\s*matches?|match\s*boxes?)\b', "safety matches in boxes splint ignition non spluttering IS 2653"),
+            (r'\b(carried\s*on\s*the\s*back|knapsack\s*sprayer)\b', "knapsack sprayer compression sprayer crop protection IS 1970"),
             (r'\b(filing\s*cabinets?|record\s*filing)\b', "fire resisting insulating filing cabinets IS 14561"),
             (r'\b(paver\s*blocks?|interlocking\s*concrete)\b', "precast concrete blocks for paving IS 15658"),
-            (r'\b(shuttering\s*boards?)\b', "plywood for concrete shuttering work IS 4990"),
-            (r'\b(tmt\s*rebars?)\b', "high strength deformed steel bars concrete reinforcement IS 1786"),
-            (r'\b(cgi\s*sheets?)\b', "galvanized steel sheets corrugated IS 277"),
             (r'\b(sand\s*buckets?)\b', "galvanized mild steel fire bucket IS 2546"),
-            (r'\b(mixer\s*grinders?)\b', "domestic electric food mixers grinders IS 4250"),
-            (r'\b(hospital\s*beds?|fowler\s*beds?)\b', "hospital bed fowler beds adjustable IS 4037"),
         ]
 
         for pattern, expansion in synonyms:
@@ -453,18 +804,24 @@ class RAGEngine:
 
     def recommend(self, query: str) -> List[Recommendation]:
         """
-        End-to-end: vector search → entity-aware re-ranking & threshold filtering →
+        End-to-end: curated rules matching + vector search → entity-aware re-ranking & threshold filtering →
         merge relational flags → return structured recommendations.
         """
+        curated_matches = self._match_curated_rules(query)
+        seen_codes = {c.is_code for c in curated_matches}
+
         raw_hits = self.hybrid_search(query, limit=25)
         filtered_hits = self._rerank_and_filter(query, raw_hits, top_k=5)
 
-        recommendations: List[Recommendation] = []
+        vector_recs: List[Recommendation] = []
         for hit in filtered_hits:
+            code = hit["is_code"]
+            if code in seen_codes:
+                continue
             p = hit["payload"]
-            recommendations.append(
+            vector_recs.append(
                 Recommendation(
-                    is_code=hit["is_code"],
+                    is_code=code,
                     title=hit["title"],
                     score=hit["score"],
                     scope=hit["scope"],
@@ -475,7 +832,9 @@ class RAGEngine:
                     normative_refs=p.get("normative_refs", []),
                 )
             )
-        return recommendations
+
+        all_recs = curated_matches + vector_recs
+        return all_recs[:5]
 
     def get_legal_framework(self, query: str, standards: List[Recommendation]) -> List[Dict[str, Any]]:
         """
@@ -589,6 +948,8 @@ class RAGEngine:
         has_qco = any(s.qco_mandatory for s in standards)
         has_fast_track = any(s.simplified_procedure for s in standards)
         has_crs = any(s.crs_applicable for s in standards)
+        has_hallmark = any("hallmark" in s.title.lower() or s.is_code in ["IS 1417", "IS 2112"] for s in standards)
+        has_structural = any("seismic" in s.title.lower() or "structural" in s.title.lower() or s.is_code in ["IS 1893 (Part 1)", "IS 13920", "IS 875 (Part 1)", "IS 456"] for s in standards)
 
         lines = [
             "================================================================================",
@@ -622,10 +983,38 @@ class RAGEngine:
             "   Valid certification credentials must be submitted alongside the technical bid.",
         ])
 
+        if has_crs:
+            lines.extend([
+                "",
+                "3. COMPULSORY REGISTRATION SCHEME (CRS - SCHEME-II):",
+                "   For electronics, IT equipment, and battery systems governed under the Compulsory",
+                "   Registration Scheme (MeitY / BIS), the supplier/OEM must hold a valid BIS CRS",
+                "   Registration Number (R-Number). The genuine R-Number and standard emblem must be",
+                "   legibly marked on each unit and outer carton prior to supply inspection.",
+            ])
+
+        if has_hallmark:
+            lines.extend([
+                "",
+                "3. MANDATORY PRECIOUS METALS HALLMARKING (GOLD / SILVER):",
+                "   All precious metal artefacts and jewellery must conform strictly to IS 1417 (Gold)",
+                "   or IS 2112 (Silver) and bear the mandatory 6-digit alphanumeric HUID (Hallmark Unique",
+                "   Identification) assigned by a BIS-recognized Assaying and Hallmarking Centre (AHC).",
+            ])
+
+        if has_structural:
+            lines.extend([
+                "",
+                "3. NATIONAL BUILDING CODE & SEISMIC STRUCTURAL INTEGRITY:",
+                "   Engineering design calculations, dead/imposed loads, wind forces, and ductile detailing",
+                "   must strictly comply with NBC 2016, IS 1893 (Part 1), IS 13920, and IS 875 series.",
+                "   Structural stability certificates from a licensed structural engineer must be submitted.",
+            ])
+
         if has_fast_track:
             lines.extend([
                 "",
-                "3. SIMPLIFIED PROCEDURE (30-DAY FAST TRACK LICENSING):",
+                "4. SIMPLIFIED PROCEDURE (30-DAY FAST TRACK LICENSING):",
                 "   The product standard(s) specified herein are covered under Option 2 of the BIS",
                 "   Conformity Assessment Regulations (Annexure II(C)). Manufacturers are eligible",
                 "   for accelerated grant of licence within thirty (30) days based on test reports",
@@ -634,13 +1023,13 @@ class RAGEngine:
 
         lines.extend([
             "",
-            "4. STATUTORY PENAL LIABILITY & DISQUALIFICATION:",
+            "5. STATUTORY PENAL LIABILITY & DISQUALIFICATION:",
             "   Supply of uncertified or non-conforming goods where mandatory QCOs apply is a",
             "   cognizable statutory violation punishable under Section 29 of the BIS Act, 2016",
             "   attracting imprisonment, financial penalties up to ten times the consignment value,",
             "   immediate rejection, contract termination, and blacklisting across government portals.",
             "",
-            "5. NORMATIVE TEST REPORTS & ACCREDITED PROOF:",
+            "6. NORMATIVE TEST REPORTS & ACCREDITED PROOF:",
             "   Each batch/consignment must be accompanied by a Manufacturer Test Certificate (MTC)",
             "   confirming compliance with all normative testing standards and verified by a NABL/BIS",
             "   accredited laboratory.",

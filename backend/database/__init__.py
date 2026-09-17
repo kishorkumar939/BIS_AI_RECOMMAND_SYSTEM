@@ -2,7 +2,10 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import declarative_base, sessionmaker
 import os
 
-DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./bis_standards.db")
+from pathlib import Path
+
+_default_db = Path(__file__).resolve().parent.parent / "bis_standards.db"
+DATABASE_URL = os.getenv("DATABASE_URL", f"sqlite:///{_default_db.as_posix()}")
 
 engine = create_engine(
     DATABASE_URL,
