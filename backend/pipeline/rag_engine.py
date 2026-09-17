@@ -6,9 +6,12 @@ and the prompt template for drafting legal tender compliance clauses.
 import os
 import re
 import json
+import logging
 from pathlib import Path
-from typing import List, Dict, Any, Tuple
+from typing import List, Dict, Any, Tuple, Optional
 from dataclasses import dataclass
+
+logger = logging.getLogger(__name__)
 
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_core.prompts import ChatPromptTemplate
@@ -150,13 +153,19 @@ class RAGEngine:
     """Orchestrates embeddings, vector retrieval, curated rules matching, and LLM synthesis."""
 
     def __init__(self):
-        self.embeddings = self._init_embeddings()
+        self._embeddings = None
         self.qdrant_client = self._init_qdrant()
         self._ensure_collection()
         self.llm = self._init_llm()
         self.prompt = self._build_prompt()
         self.legal_prompt = self._build_legal_prompt()
         self.curated_rules = self._load_curated_rules()
+
+    @property
+    def embeddings(self):
+        if self._embeddings is None:
+            self._embeddings = self._init_embeddings()
+        return self._embeddings
 
     def _load_curated_rules(self) -> List[Dict[str, Any]]:
         """Load curated certification rules and standards dataset from bis_rules.json."""
@@ -279,7 +288,7 @@ class RAGEngine:
 
     # --- Initialization helpers ---
 
-    def _init_embeddings(self) -> HuggingFaceEmbeddings:
+    def _init_embeddings(self) -> Optional[HuggingFaceEmbeddings]:
         try:
             return HuggingFaceEmbeddings(
                 model_name=EMBEDDING_MODEL,
@@ -287,10 +296,16 @@ class RAGEngine:
                 encode_kwargs={"normalize_embeddings": True},
             )
         except Exception:
+            pass
+
+        try:
             return HuggingFaceEmbeddings(
                 model_name=EMBEDDING_MODEL,
                 encode_kwargs={"normalize_embeddings": True},
             )
+        except Exception as err:
+            logger.warning(f"Could not load HuggingFaceEmbeddings: {err}. Falling back to curated & catalog search.")
+            return None
 
     def _init_qdrant(self) -> QdrantClient:
         """Connect to Docker/Cloud Qdrant or fallback to local disk storage."""
@@ -312,11 +327,10 @@ class RAGEngine:
             collections = self.qdrant_client.get_collections().collections
             exists = any(c.name == QDRANT_COLLECTION for c in collections)
             if not exists:
-                sample_dim = len(self.embeddings.embed_query("test"))
                 self.qdrant_client.create_collection(
                     collection_name=QDRANT_COLLECTION,
                     vectors_config=qdrant_models.VectorParams(
-                        size=sample_dim,
+                        size=384,
                         distance=qdrant_models.Distance.COSINE,
                     ),
                 )
@@ -525,8 +539,15 @@ class RAGEngine:
         Perform vector search on the Qdrant collection for Indian Standards.
         Uses query expansion to capture colloquial synonyms.
         """
+        if self.embeddings is None:
+            return []
+
         search_text = self._expand_query(query)
-        query_vector = self.embeddings.embed_query(search_text)
+        try:
+            query_vector = self.embeddings.embed_query(search_text)
+        except Exception:
+            return []
+
         filter_std = qdrant_models.Filter(
             must=[
                 qdrant_models.FieldCondition(
@@ -543,16 +564,21 @@ class RAGEngine:
                 query_filter=filter_std,
                 limit=limit,
                 with_payload=True,
+                timeout=4.0,
             )
             points = res.points
         except Exception:
-            res = self.qdrant_client.query_points(
-                collection_name=QDRANT_COLLECTION,
-                query=query_vector,
-                limit=limit,
-                with_payload=True,
-            )
-            points = res.points
+            try:
+                res = self.qdrant_client.query_points(
+                    collection_name=QDRANT_COLLECTION,
+                    query=query_vector,
+                    limit=limit,
+                    with_payload=True,
+                    timeout=4.0,
+                )
+                points = res.points
+            except Exception:
+                points = []
 
         return [
             {
@@ -844,57 +870,59 @@ class RAGEngine:
         Retrieve and synthesize applicable statutory provisions from the BIS Act 2016,
         Conformity Assessment Regulations, and Gazette notifications in Qdrant.
         """
-        query_vector = self.embeddings.embed_query(query)
-        filter_legal = qdrant_models.Filter(
-            must=[
-                qdrant_models.FieldCondition(
-                    key="doc_type",
-                    match=qdrant_models.MatchValue(value="legal_regulation"),
-                )
-            ]
-        )
         legal_items: List[Dict[str, Any]] = []
 
-        try:
-            res = self.qdrant_client.query_points(
-                collection_name=QDRANT_COLLECTION,
-                query=query_vector,
-                query_filter=filter_legal,
-                limit=4,
-                with_payload=True,
-            )
-            for p in res.points:
-                src = p.payload.get("source", "BIS Regulation Gazette")
-                title = p.payload.get("title", "BIS Notification")
-                content = p.payload.get("content", "").strip()
+        if self.embeddings is not None:
+            try:
+                query_vector = self.embeddings.embed_query(query)
+                filter_legal = qdrant_models.Filter(
+                    must=[
+                        qdrant_models.FieldCondition(
+                            key="doc_type",
+                            match=qdrant_models.MatchValue(value="legal_regulation"),
+                        )
+                    ]
+                )
+                res = self.qdrant_client.query_points(
+                    collection_name=QDRANT_COLLECTION,
+                    query=query_vector,
+                    query_filter=filter_legal,
+                    limit=4,
+                    with_payload=True,
+                    timeout=4.0,
+                )
+                for p in res.points:
+                    src = p.payload.get("source", "BIS Regulation Gazette")
+                    title = p.payload.get("title", "BIS Notification")
+                    content = p.payload.get("content", "").strip()
 
-                # Categorize Act vs Regulations vs Gazette
-                if "Act" in title or "Order" in title or "2016" in title or "ROD" in src:
-                    act_type = "The Bureau of Indian Standards Act, 2016"
-                    prov = "Section 16 & 17: Mandatory Quality Mark & Licensing"
-                    app = "Statutory mandate requiring mandatory conformity to Indian Standards prior to distribution or supply in government procurement."
-                elif "Conformity" in title or "CA" in title or "Simplified" in title:
-                    act_type = "BIS (Conformity Assessment) Regulations, 2018 (as amended)"
-                    prov = "Regulation 3 & 4 (Option 2 Simplified Procedure)"
-                    app = "Governs conformity assessment procedures, 30-day fast-track licensing based on lab testing, and market surveillance."
-                elif "Hallmark" in title or "HM" in title:
-                    act_type = "BIS (Hallmarking) Regulations, 2018"
-                    prov = "Regulation 5: Certified Precious Metal Articles"
-                    app = "Mandatory purity certification and hallmarking requirements."
-                else:
-                    act_type = "Official Gazette of India — BIS Regulatory Order"
-                    prov = "Quality Control Order (QCO) Gazette Notification"
-                    app = "Directs mandatory compliance under Section 16 of the BIS Act 2016 for specified goods and penalties under Section 29."
+                    # Categorize Act vs Regulations vs Gazette
+                    if "Act" in title or "Order" in title or "2016" in title or "ROD" in src:
+                        act_type = "The Bureau of Indian Standards Act, 2016"
+                        prov = "Section 16 & 17: Mandatory Quality Mark & Licensing"
+                        app = "Statutory mandate requiring mandatory conformity to Indian Standards prior to distribution or supply in government procurement."
+                    elif "Conformity" in title or "CA" in title or "Simplified" in title:
+                        act_type = "BIS (Conformity Assessment) Regulations, 2018 (as amended)"
+                        prov = "Regulation 3 & 4 (Option 2 Simplified Procedure)"
+                        app = "Governs conformity assessment procedures, 30-day fast-track licensing based on lab testing, and market surveillance."
+                    elif "Hallmark" in title or "HM" in title:
+                        act_type = "BIS (Hallmarking) Regulations, 2018"
+                        prov = "Regulation 5: Certified Precious Metal Articles"
+                        app = "Mandatory purity certification and hallmarking requirements."
+                    else:
+                        act_type = "Official Gazette of India — BIS Regulatory Order"
+                        prov = "Quality Control Order (QCO) Gazette Notification"
+                        app = "Directs mandatory compliance under Section 16 of the BIS Act 2016 for specified goods and penalties under Section 29."
 
-                legal_items.append({
-                    "source_pdf": src,
-                    "act_or_regulation": act_type,
-                    "provision": prov,
-                    "excerpt": content[:350] + ("..." if len(content) > 350 else ""),
-                    "applicability": app,
-                })
-        except Exception:
-            pass
+                    legal_items.append({
+                        "source_pdf": src,
+                        "act_or_regulation": act_type,
+                        "provision": prov,
+                        "excerpt": content[:350] + ("..." if len(content) > 350 else ""),
+                        "applicability": app,
+                    })
+            except Exception:
+                pass
 
         # Always ensure core statutory anchors are present
         if len(legal_items) < 2:
