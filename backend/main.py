@@ -104,12 +104,10 @@ class AuditPDFResponse(BaseModel):
 
 @app.get("/api/v1/health")
 async def health():
-    from pipeline.rag_engine import _rag_engine
     return {
         "status": "ok",
         "service": "bis-recommendation-engine",
-        "version": "1.0.1-v2",
-        "rag_initialized": _rag_engine is not None,
+        "version": "1.0.2",
     }
 
 
