@@ -10,6 +10,11 @@ export default defineConfig({
       '@': fileURLToPath(new URL('./src', import.meta.url)),
     },
   },
+  server: {
+    watch: {
+      ignored: ['**/backend/**', '**/qdrant_storage/**'],
+    },
+  },
   optimizeDeps: {
     exclude: ['lucide-react'],
   },
