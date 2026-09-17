@@ -299,8 +299,9 @@ def populate_qdrant(rules_data: Dict[str, List[Dict[str, Any]]]):
         return
 
     qdrant_url = os.getenv("QDRANT_URL", "http://localhost:6333")
+    qdrant_api_key = os.getenv("QDRANT_API_KEY", None)
     try:
-        client = QdrantClient(url=qdrant_url, timeout=2.0)
+        client = QdrantClient(url=qdrant_url, api_key=qdrant_api_key, prefer_grpc=False, timeout=5.0)
         client.get_collections()
         print(f"[+] Connected to Qdrant at {qdrant_url}")
     except Exception:
