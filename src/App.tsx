@@ -40,8 +40,15 @@ export default function App() {
       setRecommendations(data.recommendations);
       setClause(data.compliance_clause);
       setLegalFramework(data.legal_framework || []);
-    } catch {
-      setError("Failed to fetch recommendations. Please try again.");
+    } catch (err: any) {
+      const msg = err?.message || "";
+      if (msg.includes("Failed to fetch") || msg.includes("NetworkError")) {
+        setError(
+          "Unable to connect to the backend server. If using Render free tier, the backend may be waking up from sleep (50s cold start). Please wait a moment and click search again."
+        );
+      } else {
+        setError(msg || "Failed to fetch recommendations. Please try again.");
+      }
     } finally {
       setIsLoading(false);
     }

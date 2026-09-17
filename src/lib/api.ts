@@ -7,7 +7,15 @@ import type {
 
 export type { LegalCitation, AuditResult, BISRecommendation, RecommendationResponse };
 
-const API_BASE = import.meta.env.VITE_API_BASE || "http://localhost:8000";
+// Clean and sanitize backend API base URL (trims accidental whitespace and trailing slashes)
+const rawBase = (
+  import.meta.env.VITE_API_BASE ||
+  import.meta.env.VITE_API_URL ||
+  import.meta.env.VITE_BACKEND_URL ||
+  "http://localhost:8000"
+).trim();
+
+const API_BASE = rawBase.replace(/\/+$/, "").replace(/\/api\/v1$/, "").replace(/\/api$/, "");
 
 export async function checkBackendHealth(): Promise<boolean> {
   try {

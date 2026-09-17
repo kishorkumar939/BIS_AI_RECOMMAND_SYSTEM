@@ -297,7 +297,7 @@ class RAGEngine:
         qdrant_url = os.getenv("QDRANT_URL", "http://localhost:6333")
         qdrant_api_key = os.getenv("QDRANT_API_KEY", None)
         try:
-            client = QdrantClient(url=qdrant_url, api_key=qdrant_api_key, timeout=3.0)
+            client = QdrantClient(url=qdrant_url, api_key=qdrant_api_key, prefer_grpc=False, timeout=5.0)
             client.get_collections()
             return client
         except Exception:
@@ -308,17 +308,20 @@ class RAGEngine:
 
     def _ensure_collection(self):
         """Create the Qdrant collection if it does not exist."""
-        collections = self.qdrant_client.get_collections().collections
-        exists = any(c.name == QDRANT_COLLECTION for c in collections)
-        if not exists:
-            sample_dim = len(self.embeddings.embed_query("test"))
-            self.qdrant_client.create_collection(
-                collection_name=QDRANT_COLLECTION,
-                vectors_config=qdrant_models.VectorParams(
-                    size=sample_dim,
-                    distance=qdrant_models.Distance.COSINE,
-                ),
-            )
+        try:
+            collections = self.qdrant_client.get_collections().collections
+            exists = any(c.name == QDRANT_COLLECTION for c in collections)
+            if not exists:
+                sample_dim = len(self.embeddings.embed_query("test"))
+                self.qdrant_client.create_collection(
+                    collection_name=QDRANT_COLLECTION,
+                    vectors_config=qdrant_models.VectorParams(
+                        size=sample_dim,
+                        distance=qdrant_models.Distance.COSINE,
+                    ),
+                )
+        except Exception:
+            pass
 
     def _init_llm(self):
         """Load the local LLM. Swap for Ollama / vLLM as needed."""
