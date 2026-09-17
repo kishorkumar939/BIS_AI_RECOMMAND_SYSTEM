@@ -288,6 +288,11 @@ class RAGEngine:
     # --- Initialization helpers ---
 
     def _init_embeddings(self) -> Any:
+        # Prevent 512MB RAM OOM kill on Render free tier
+        if os.environ.get("RENDER") or os.environ.get("DISABLE_TORCH") == "1" or os.environ.get("LOW_MEMORY") == "1":
+            logger.info("Cloud/Render environment detected: using instant in-memory rule engine and catalog matching.")
+            return None
+
         try:
             from langchain_huggingface import HuggingFaceEmbeddings
         except (ImportError, Exception, MemoryError) as err:
@@ -312,22 +317,33 @@ class RAGEngine:
             logger.warning(f"Could not load HuggingFaceEmbeddings: {err}. Falling back to curated & catalog search.")
             return None
 
-    def _init_qdrant(self) -> QdrantClient:
-        """Connect to Docker/Cloud Qdrant or fallback to local disk storage."""
-        qdrant_url = os.getenv("QDRANT_URL", "http://localhost:6333")
-        qdrant_api_key = os.getenv("QDRANT_API_KEY", None)
+    def _init_qdrant(self) -> Any:
+        """Connect to Docker/Cloud Qdrant or fallback to safe memory storage."""
+        raw_url = (os.getenv("QDRANT_URL") or "").strip()
+        raw_key = (os.getenv("QDRANT_API_KEY") or "").strip() or None
+
+        if raw_url:
+            if not raw_url.startswith("http://") and not raw_url.startswith("https://"):
+                raw_url = f"https://{raw_url}"
+            try:
+                client = QdrantClient(url=raw_url, api_key=raw_key, prefer_grpc=False, timeout=5.0)
+                client.get_collections()
+                logger.info(f"Connected successfully to Qdrant cluster at {raw_url}")
+                return client
+            except Exception as err:
+                logger.warning(f"Could not connect to remote Qdrant ({err}). Falling back to memory.")
+
+        # Safe fallback: in-memory client that never locks disk files with portalocker
         try:
-            client = QdrantClient(url=qdrant_url, api_key=qdrant_api_key, prefer_grpc=False, timeout=5.0)
-            client.get_collections()
-            return client
-        except Exception:
-            from pathlib import Path
-            storage_path = Path(__file__).resolve().parent.parent / "qdrant_storage"
-            storage_path.mkdir(exist_ok=True)
-            return QdrantClient(path=str(storage_path))
+            return QdrantClient(":memory:")
+        except Exception as err:
+            logger.warning(f"Could not initialize memory Qdrant: {err}")
+            return None
 
     def _ensure_collection(self):
         """Create the Qdrant collection if it does not exist."""
+        if not self.qdrant_client:
+            return
         try:
             collections = self.qdrant_client.get_collections().collections
             exists = any(c.name == QDRANT_COLLECTION for c in collections)
@@ -804,16 +820,24 @@ class RAGEngine:
 
     def retrieve_legal_context(self, query: str) -> str:
         """Retrieve relevant regulatory chunks from the embedded BIS Act / Regulations PDFs."""
-        query_vector = self.embeddings.embed_query(query)
-        filter_legal = qdrant_models.Filter(
-            must=[
-                qdrant_models.FieldCondition(
-                    key="doc_type",
-                    match=qdrant_models.MatchValue(value="legal_regulation"),
-                )
-            ]
-        )
+        if self.embeddings is None or self.qdrant_client is None:
+            return (
+                "Bureau of Indian Standards Act, 2016 (Section 16 & Section 29): "
+                "The Central Government may notify mandatory compliance of goods to an Indian Standard "
+                "under Quality Control Orders (QCO). Manufacture, import, or sale of non-conforming goods "
+                "is prohibited and punishable under law."
+            )
+
         try:
+            query_vector = self.embeddings.embed_query(query)
+            filter_legal = qdrant_models.Filter(
+                must=[
+                    qdrant_models.FieldCondition(
+                        key="doc_type",
+                        match=qdrant_models.MatchValue(value="legal_regulation"),
+                    )
+                ]
+            )
             res = self.qdrant_client.query_points(
                 collection_name=QDRANT_COLLECTION,
                 query=query_vector,
@@ -842,7 +866,7 @@ class RAGEngine:
         merge relational flags → return structured recommendations.
         """
         curated_matches = self._match_curated_rules(query)
-        if len(curated_matches) >= 2:
+        if len(curated_matches) >= 1:
             return curated_matches[:5]
 
         seen_codes = {c.is_code for c in curated_matches}
@@ -883,7 +907,7 @@ class RAGEngine:
         """
         legal_items: List[Dict[str, Any]] = []
 
-        if self.embeddings is not None:
+        if self.embeddings is not None and self.qdrant_client is not None:
             try:
                 query_vector = self.embeddings.embed_query(query)
                 filter_legal = qdrant_models.Filter(

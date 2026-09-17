@@ -107,7 +107,7 @@ async def health():
     return {
         "status": "ok",
         "service": "bis-recommendation-engine",
-        "version": "1.0.2",
+        "version": "1.0.3",
     }
 
 

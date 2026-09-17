@@ -31,22 +31,37 @@ export async function fetchRecommendations(
   topK: number = 5,
   generateClause: boolean = true
 ): Promise<RecommendationResponse> {
-  const res = await fetch(`${API_BASE}/api/v1/recommend`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ query, top_k: topK, generate_clause: generateClause }),
-  });
+  const url = `${API_BASE}/api/v1/recommend`;
+  let lastErr: any = null;
 
-  if (!res.ok) {
-    throw new Error(`Failed to fetch recommendations from server (status: ${res.status})`);
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    try {
+      const res = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ query, top_k: topK, generate_clause: generateClause }),
+      });
+
+      if (!res.ok) {
+        throw new Error(`Server returned status: ${res.status}`);
+      }
+
+      const data = await res.json();
+      return {
+        recommendations: data.recommendations || [],
+        compliance_clause: data.compliance_clause || null,
+        legal_framework: data.legal_framework || [],
+      };
+    } catch (err) {
+      lastErr = err;
+      if (attempt === 1) {
+        // Render free tier cold start: pause 2s and retry once
+        await new Promise((resolve) => setTimeout(resolve, 2000));
+      }
+    }
   }
 
-  const data = await res.json();
-  return {
-    recommendations: data.recommendations || [],
-    compliance_clause: data.compliance_clause || null,
-    legal_framework: data.legal_framework || [],
-  };
+  throw lastErr;
 }
 
 export async function auditPDF(file: File): Promise<AuditResult> {
