@@ -13,7 +13,6 @@ from dataclasses import dataclass
 
 logger = logging.getLogger(__name__)
 
-from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.runnables import RunnablePassthrough
@@ -288,7 +287,13 @@ class RAGEngine:
 
     # --- Initialization helpers ---
 
-    def _init_embeddings(self) -> Optional[HuggingFaceEmbeddings]:
+    def _init_embeddings(self) -> Any:
+        try:
+            from langchain_huggingface import HuggingFaceEmbeddings
+        except (ImportError, Exception, MemoryError) as err:
+            logger.warning(f"Could not import HuggingFaceEmbeddings: {err}")
+            return None
+
         try:
             return HuggingFaceEmbeddings(
                 model_name=EMBEDDING_MODEL,
@@ -303,7 +308,7 @@ class RAGEngine:
                 model_name=EMBEDDING_MODEL,
                 encode_kwargs={"normalize_embeddings": True},
             )
-        except Exception as err:
+        except (Exception, MemoryError) as err:
             logger.warning(f"Could not load HuggingFaceEmbeddings: {err}. Falling back to curated & catalog search.")
             return None
 
