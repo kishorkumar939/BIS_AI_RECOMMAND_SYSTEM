@@ -842,10 +842,16 @@ class RAGEngine:
         merge relational flags → return structured recommendations.
         """
         curated_matches = self._match_curated_rules(query)
+        if len(curated_matches) >= 2:
+            return curated_matches[:5]
+
         seen_codes = {c.is_code for c in curated_matches}
 
-        raw_hits = self.hybrid_search(query, limit=25)
-        filtered_hits = self._rerank_and_filter(query, raw_hits, top_k=5)
+        try:
+            raw_hits = self.hybrid_search(query, limit=25)
+            filtered_hits = self._rerank_and_filter(query, raw_hits, top_k=5)
+        except Exception:
+            filtered_hits = []
 
         vector_recs: List[Recommendation] = []
         for hit in filtered_hits:
